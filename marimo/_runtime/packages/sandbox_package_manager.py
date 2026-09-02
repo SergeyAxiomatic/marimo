@@ -19,7 +19,7 @@ from marimo._runtime.packages.pypi_package_manager import PypiPackageManager
 from marimo._runtime.packages.utils import split_packages
 
 if TYPE_CHECKING:
-    from marimo._environments.sandbox import NotebookSandbox
+    from marimo._environments.sandbox import Backend, NotebookSandbox
     from marimo._runtime.packages.package_manager import LogCallback
     from marimo._utils.uv_tree import DependencyTreeNode
 
@@ -31,6 +31,7 @@ class SandboxPackageManager(PypiPackageManager):
 
     def __init__(self, sandbox: NotebookSandbox) -> None:
         self._sandbox = sandbox
+        self.last_error: str | None = None
         self.name = sandbox.backend
         self.docs_url = (
             "https://pixi.sh"
@@ -43,6 +44,10 @@ class SandboxPackageManager(PypiPackageManager):
             else None
         )
         super().__init__(python_exe=python)
+
+    @property
+    def backend(self) -> Backend:
+        return self._sandbox.backend
 
     def rebind(self, filename: str) -> None:
         """Follow a notebook rename without replacing its package manager."""
@@ -62,6 +67,7 @@ class SandboxPackageManager(PypiPackageManager):
         log_callback: LogCallback | None = None,
     ) -> bool:
         del group
+        self.last_error = None
         try:
             for requirement in split_packages(package):
                 await asyncio.to_thread(
@@ -77,6 +83,7 @@ class SandboxPackageManager(PypiPackageManager):
 
     async def uninstall(self, package: str, group: str | None = None) -> bool:
         del group
+        self.last_error = None
         try:
             for requirement in split_packages(package):
                 await asyncio.to_thread(self._sandbox.remove, requirement)
@@ -128,9 +135,11 @@ class SandboxPackageManager(PypiPackageManager):
         # add/remove already changed the Manifest and synchronized it.
         return True
 
-    @staticmethod
-    def _report(error: Exception, log_callback: LogCallback | None) -> None:
+    def _report(
+        self, error: Exception, log_callback: LogCallback | None
+    ) -> None:
         message = _redact_url_credentials(str(error.__cause__ or error))
+        self.last_error = message
         LOGGER.error("Failed to update notebook sandbox: %s", message)
         if log_callback is not None:
             log_callback(message + "\n")
